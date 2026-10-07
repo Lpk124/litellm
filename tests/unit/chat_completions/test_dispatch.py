@@ -278,34 +278,29 @@ def test_sync_completion_request_projects_public_arguments() -> None:
 
 
 @pytest.mark.asyncio
-async def test_async_completion_falls_back_after_native_declines() -> None:
-    from litellm.rust_bridge.bindings import native_exception_types
-
-    native_types: Final = native_exception_types()
-    if native_types is None:
-        pytest.skip("native bridge is unavailable")
-    declined, _ = native_types
-    expected: Final = ModelResponse()
+async def test_async_completion_propagates_native_failure_without_python_replay() -> None:
+    failure: Final = ValueError("unsupported")
     rules: Final[Rules] = (RouteRule(Route.CHAT_COMPLETIONS, Rollout.RUST_OPT_OUT),)
 
     async def native(request: NativeCall) -> ModelResponse:
-        raise declined("unsupported")
+        raise failure
 
     async def python(*args: object, **kwargs: object) -> ModelResponse:
-        return expected
+        pytest.fail("native errors must not replay through Python")
 
     binding: Final[NativeBinding[NativeAcompletion]] = NativeBinding("acompletion", validate=lambda _: None)
     binding.override(native)
-    response: Final = await dispatch._ADISPATCH.arun(  # pyright: ignore[reportPrivateUsage]  # test an explicit route decision
-        ("test-model", MESSAGES),
-        {},
-        python=python,
-        binding=binding,
-        native=native_call_hook,
-        rules=rules,
-    )
+    with pytest.raises(ValueError, match="unsupported") as raised:
+        await dispatch._ADISPATCH.arun(  # pyright: ignore[reportPrivateUsage]  # test an explicit route decision
+            ("test-model", MESSAGES),
+            {},
+            python=python,
+            binding=binding,
+            native=native_call_hook,
+            rules=rules,
+        )
 
-    assert response is expected
+    assert raised.value is failure
 
 
 def test_internal_acompletion_marker_bypasses_native() -> None:

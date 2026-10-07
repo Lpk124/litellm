@@ -110,7 +110,7 @@ fn merges_consecutive_user_turns_into_one_message() {
 }
 
 #[test]
-fn declines_streaming() {
+fn rejects_streaming() {
     assert_eq!(
         reason(
             json!([{"role": "user", "content": "hi"}]),
@@ -120,51 +120,45 @@ fn declines_streaming() {
     );
 }
 
-#[test]
-fn declines_top_k_because_python_routes_it_by_base_model() {
-    assert_eq!(
-        reason(
-            json!([{"role": "user", "content": "hi"}]),
-            json!({"topK": 40})
-        ),
-        Some(Unsupported("unrecognized request parameter"))
-    );
-}
-
 #[rstest]
+#[case::top_k(json!({"topK":40}))]
+#[case::unknown(json!({"provider_extension":{"nested":[true,null,7]}}))]
 #[case::tools(json!({"tools": []}))]
 #[case::tool_choice(json!({"tool_choice": {"auto": {}}}))]
 #[case::thinking(json!({"thinking": {"type": "enabled"}}))]
 #[case::request_metadata(json!({"requestMetadata": {"k": "v"}}))]
 #[case::output_config(json!({"outputConfig": {}}))]
 #[case::parallel_tool_use_config(json!({"_parallel_tool_use_config": {}}))]
-fn declines_tools_and_other_params_outside_the_allowlist(#[case] param: Value) {
+fn preserves_provider_params_without_an_allowlist(#[case] param: Value) {
     assert_eq!(
         reason(json!([{"role": "user", "content": "hi"}]), param.clone()),
-        Some(Unsupported("unrecognized request parameter")),
-        "expected {param} to decline"
+        None
     );
+    let body = transform(json!([{"role":"user","content":"hi"}]), param.clone());
+    for (name, value) in params(param) {
+        assert_eq!(body[&name], value);
+    }
 }
 
 #[rstest]
 #[case::empty_string(json!(""))]
 #[case::whitespace_string(json!("   "))]
 #[case::whitespace_text_block(json!([{"type": "text", "text": " "}]))]
-fn declines_blank_text_rather_than_substituting_the_anthropic_placeholder(#[case] content: Value) {
+fn rejects_blank_text_rather_than_substituting_the_anthropic_placeholder(#[case] content: Value) {
     assert_eq!(
         reason(
             json!([{"role": "user", "content": content}, {"role": "user", "content": "hi"}]),
             json!({})
         ),
         Some(Unsupported("blank message text")),
-        "expected blank content {content} to decline"
+        "expected blank content {content} to reject"
     );
 }
 
 #[test]
-fn declines_a_message_whose_content_list_is_empty() {
+fn rejects_a_message_whose_content_list_is_empty() {
     // The blank-text check scans parts, so an empty list clears it; Converse
-    // rejects an empty `content` array, which is a decline the core owes the
+    // rejects an empty `content` array, which is a reject the core owes the
     // host before the call rather than an error after it.
     assert_eq!(
         reason(json!([{"role": "user", "content": []}]), json!({})),
@@ -180,7 +174,7 @@ fn declines_a_message_whose_content_list_is_empty() {
 }
 
 #[test]
-fn declines_a_conversation_that_opens_or_closes_on_an_assistant_turn() {
+fn rejects_a_conversation_that_opens_or_closes_on_an_assistant_turn() {
     assert_eq!(
         reason(
             json!([
@@ -417,7 +411,7 @@ fn reports_an_empty_converse_answer_as_an_empty_string_not_null() {
 fn reports_the_total_tokens_converse_sent_rather_than_recomputing_them() {
     // Python reads `usage["totalTokens"]` straight through here, where Anthropic
     // has no such field and adds the two counts instead. The two agree while the
-    // gate declines every cache_control request, so this is what keeps them
+    // gate rejects every cache_control request, so this is what keeps them
     // agreeing if that ever widens.
     let response = transform_response(json!({
         "output": {"message": {"content": [{"text": "x"}]}},
@@ -448,7 +442,7 @@ fn falls_back_to_the_computed_total_when_converse_omits_it() {
 }
 
 #[test]
-fn declines_a_cache_control_message_so_widening_the_gate_is_a_red_test() {
+fn rejects_a_cache_control_message_so_widening_the_gate_is_a_red_test() {
     // Converse only reports cache token counts when the request carries a
     // cachePoint block, which is why the provider total and the computed one
     // cannot disagree today. This is the tripwire: whoever widens the gate to
@@ -488,7 +482,7 @@ fn folds_converse_cache_tokens_into_prompt_tokens() {
 }
 
 #[test]
-fn declines_a_response_carrying_a_tool_use_block() {
+fn rejects_a_response_carrying_a_tool_use_block() {
     let err = transform_response(json!({
         "output": {"message": {"content": [
             {"toolUse": {"toolUseId": "t1", "name": "f", "input": {}}}

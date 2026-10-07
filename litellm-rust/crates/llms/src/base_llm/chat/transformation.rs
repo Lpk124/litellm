@@ -29,13 +29,6 @@ const IGNORABLE_MESSAGE_FIELDS: &[&str] = &["name"];
 
 pub use crate::base_llm::auth::{Headers, ValidatedEnvironment};
 
-/// Why a request cannot be served by the Rust path.
-///
-/// The core declines rather than guessing: the host turns this into a
-/// transparent fallback to the Python implementation, which covers the full
-/// surface. Acceptance is an allowlist, so a parameter or message shape the
-/// core has never seen declines by construction instead of being translated
-/// wrong.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Unsupported(pub &'static str);
 
@@ -66,7 +59,6 @@ pub trait BaseConfig: Sync {
         response: ProviderChatResponseData,
     ) -> Result<ChatCompletionsResponse, Error>;
 
-    /// `None` means this config has no streaming path yet, so the host keeps the request.
     fn model_response_iterator(&self, _shape: StreamShape) -> Option<ChatStream> {
         None
     }
@@ -98,20 +90,12 @@ pub trait BaseConfig: Sync {
         messages: &[ChatMessage],
         optional_params: &Map<String, Value>,
     ) -> Option<Unsupported> {
-        unsupported_param(
-            self.supported_openai_param_mappings(),
-            self.config_params(),
-            optional_params,
-        )
-        .or_else(|| messages.iter().find_map(unsupported_message))
+        unsupported_stream(optional_params)
+            .or_else(|| messages.iter().find_map(unsupported_message))
     }
 }
 
-pub fn unsupported_param(
-    supported: &'static [(&'static str, &'static str)],
-    config: &'static [&'static str],
-    optional_params: &Map<String, Value>,
-) -> Option<Unsupported> {
+pub fn unsupported_stream(optional_params: &Map<String, Value>) -> Option<Unsupported> {
     if optional_params
         .get(STREAM_PARAM)
         .and_then(Value::as_bool)
@@ -119,22 +103,9 @@ pub fn unsupported_param(
     {
         return Some(Unsupported("streaming"));
     }
-    optional_params
-        .keys()
-        .any(|key| {
-            key != STREAM_PARAM
-                && !supported
-                    .iter()
-                    .any(|(_, provider_name)| *provider_name == key)
-                && !config.contains(&key.as_str())
-        })
-        .then_some(Unsupported("unrecognized request parameter"))
+    None
 }
 
-/// Message shapes the core can translate faithfully: text content, either a
-/// plain string or a non-empty list of parts that are all
-/// `{"type": "text", "text": ...}`. Tool calls, tool results, and multimodal
-/// parts decline so Python's fuller translation handles them.
 pub fn unsupported_message(message: &ChatMessage) -> Option<Unsupported> {
     if message
         .extra

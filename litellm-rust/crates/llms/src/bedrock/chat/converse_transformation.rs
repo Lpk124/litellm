@@ -23,7 +23,7 @@ use crate::{
             streaming::StreamShape,
             transformation::{
                 BaseConfig, Headers, ProviderChatRequestData, ProviderChatResponseData,
-                Unsupported, ValidatedEnvironment, unsupported_message, unsupported_param,
+                Unsupported, ValidatedEnvironment, unsupported_message, unsupported_stream,
             },
         },
     },
@@ -239,8 +239,6 @@ impl BaseConfig for AmazonConverseConfig {
         let response: ConverseResponse = serde_json::from_value(body).map_err(|error| {
             Error::InvalidResponse(format!("invalid Converse response: {error}").into())
         })?;
-        // The route declines tool requests, so anything other than a text block
-        // is something this path never asked for. Decline; the host falls back.
         if response.message_content_is_non_text() {
             return Err(Error::Unsupported("non-text response content block"));
         }
@@ -346,36 +344,24 @@ impl BaseConfig for AmazonConverseConfig {
         messages: &[ChatMessage],
         optional_params: &Map<String, Value>,
     ) -> Option<Unsupported> {
-        unsupported_param(
-            self.supported_openai_param_mappings(),
-            CONFIG_PARAMS,
-            optional_params,
-        )
-        .or_else(|| messages.iter().find_map(unsupported_message))
-        // Python's Converse translation drops blank text blocks instead of
-        // substituting the placeholder the shared conversation builder
-        // applies, so decline blank text rather than diverge.
-        .or_else(|| {
-            messages
-                .iter()
-                .any(has_blank_text)
-                .then_some(Unsupported("blank message text"))
-        })
-        // Converse has no assistant prefill: Python inserts a continue turn
-        // when a conversation opens or closes on an assistant message, and
-        // only under `litellm.modify_params`, which the core cannot see.
-        // Declining both ends also keeps the shared builder's final
-        // assistant right-strip (an Anthropic rule) unreachable here.
-        .or_else(|| {
-            let conversation = build_conversation(messages);
-            let ends_on_assistant = conversation
-                .turns
-                .last()
-                .is_some_and(|turn| turn.role == TurnRole::Assistant);
-            (!conversation.opens_on_user_turn() || ends_on_assistant).then_some(Unsupported(
-                "conversation does not run user turn to user turn",
-            ))
-        })
+        unsupported_stream(optional_params)
+            .or_else(|| messages.iter().find_map(unsupported_message))
+            .or_else(|| {
+                messages
+                    .iter()
+                    .any(has_blank_text)
+                    .then_some(Unsupported("blank message text"))
+            })
+            .or_else(|| {
+                let conversation = build_conversation(messages);
+                let ends_on_assistant = conversation
+                    .turns
+                    .last()
+                    .is_some_and(|turn| turn.role == TurnRole::Assistant);
+                (!conversation.opens_on_user_turn() || ends_on_assistant).then_some(Unsupported(
+                    "conversation does not run user turn to user turn",
+                ))
+            })
     }
 }
 
@@ -412,7 +398,13 @@ fn converse_body(conversation: &Conversation, optional_params: &Map<String, Valu
             ("messages".to_string(), json!(messages)),
         ]
         .into_iter()
-        .chain((!system.is_empty()).then(|| ("system".to_string(), json!(system)))),
+        .chain((!system.is_empty()).then(|| ("system".to_string(), json!(system))))
+        .chain(optional_params.iter().filter_map(|(name, value)| {
+            (!CONFIG_PARAMS.contains(&name.as_str())
+                && name != "stream"
+                && !SUPPORTED_PARAMS.iter().any(|(_, field)| *field == name))
+            .then(|| (name.clone(), value.clone()))
+        })),
     ))
 }
 

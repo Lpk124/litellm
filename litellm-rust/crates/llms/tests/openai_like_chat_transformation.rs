@@ -251,9 +251,7 @@ fn null_token_fields_in_usage_become_zero() {
 }
 
 #[rstest]
-fn a_tool_call_response_declines_instead_of_dropping_the_calls() {
-    // The `json_mode` rewrite needs a request flag the route does not carry, so
-    // a tool-call answer falls back to Python rather than losing the calls.
+fn a_tool_call_response_rejects_instead_of_dropping_the_calls() {
     assert_eq!(
         transform_response(json!({
             "model": "m",
@@ -275,7 +273,7 @@ fn a_tool_call_response_declines_instead_of_dropping_the_calls() {
 }
 
 #[rstest]
-fn a_refusal_declines_instead_of_returning_an_empty_reply() {
+fn a_refusal_rejects_instead_of_returning_an_empty_reply() {
     assert_eq!(
         transform_response(json!({
             "model": "m",
@@ -289,7 +287,7 @@ fn a_refusal_declines_instead_of_returning_an_empty_reply() {
 }
 
 #[rstest]
-fn a_non_text_response_content_declines() {
+fn a_non_text_response_content_rejects() {
     assert_eq!(
         transform_response(json!({
             "model": "m",
@@ -304,8 +302,7 @@ fn a_non_text_response_content_declines() {
 
 #[rstest]
 #[case::streaming(json!({"stream": true}), "streaming")]
-#[case::unrecognized_param(json!({"some_provider_knob": 1}), "unrecognized request parameter")]
-fn declines(#[case] opts: Value, #[case] expected: &'static str) {
+fn rejects(#[case] opts: Value, #[case] expected: &'static str) {
     assert_eq!(
         reason(json!([{"role": "user", "content": "hi"}]), opts),
         Some(Unsupported(expected))
@@ -330,14 +327,19 @@ fn accepts_standard_openai_params() {
 }
 
 #[rstest]
-fn tool_parameters_decline_before_the_call() {
-    // A `tools` request would come back with tool calls this port cannot
-    // normalize, so it declines at the gate instead of after the call.
+fn preserves_tools_and_unknown_provider_parameters() {
+    let options = json!({"tools": [{"type":"function", "function":{"name":"f"}}],
+        "provider_extension":{"nested":[true,null,7]}});
     assert_eq!(
-        reason(
-            json!([{"role": "user", "content": "hi"}]),
-            json!({"tools": [{"type": "function", "function": {"name": "f"}}]}),
-        ),
-        Some(Unsupported("unrecognized request parameter"))
+        reason(json!([{"role":"user","content":"hi"}]), options.clone()),
+        None
     );
+    let body = transform(
+        "test-model",
+        json!([{"role":"user","content":"hi"}]),
+        options.clone(),
+    );
+    for (name, value) in params(options) {
+        assert_eq!(body[&name], value);
+    }
 }

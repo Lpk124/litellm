@@ -1,14 +1,15 @@
 mod host;
 
+use serde_json::Value;
+
 use litellm_inference_responses::websocket::ResponsesWebSocketConnection as RustResponsesWebSocketConnection;
 use pyo3::{
     prelude::*,
     types::{PyDict, PyTuple},
 };
-use serde_json::Value;
 
 use crate::{
-    errors::{RustBridgeDeclined, route_error_to_pyerr},
+    errors::route_error_to_pyerr,
     marshal::{marshal_headers, optional_timeout},
 };
 
@@ -25,50 +26,11 @@ fn run_public(
         request.clone().unbind(),
         "litellm.rust_bridge.responses.route_host",
     );
-    if let Some(reason) = py
-        .import("litellm.rust_bridge.responses.route_host")?
-        .getattr("decline_reason")?
-        .call1((&request,))?
-        .extract::<Option<String>>()?
-    {
-        return Err(RustBridgeDeclined::new_err(reason));
-    }
-    let model = host
-        .argument(py, &kwargs, "model")?
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("model is required"))?
-        .extract::<String>()?;
-    let provider = host
-        .argument(py, &kwargs, "custom_llm_provider")?
-        .map(|value| value.extract::<String>())
-        .transpose()?;
-    if provider
-        .as_deref()
-        .is_some_and(|provider| provider != "openai")
-        || model
-            .strip_prefix("openai/")
-            .unwrap_or(&model)
-            .contains('/')
-    {
-        return Err(RustBridgeDeclined::new_err(
-            "native HTTP responses provider",
-        ));
-    }
-    if host
-        .argument(py, &kwargs, "stream")?
-        .map(|value| litellm_host_python::from_py::<Value>(&value))
-        .transpose()?
-        .is_some_and(|value| value == Value::Bool(true))
-    {
-        return Err(RustBridgeDeclined::new_err(
-            "native Python responses streaming",
-        ));
-    }
     let cache_call_type = if asynchronous {
         "aresponses"
     } else {
         "responses"
     };
-    crate::cache::admit_native(py, &kwargs, cache_call_type)?;
     let (arguments, hooks) = crate::routes::call_hooks(
         py,
         LoggingOperation::Responses,

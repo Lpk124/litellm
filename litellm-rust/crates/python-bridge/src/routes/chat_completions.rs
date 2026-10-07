@@ -101,7 +101,6 @@ fn run_public(
     } else {
         "completion"
     };
-    crate::cache::admit_native(py, &kwargs, cache_call_type)?;
     let (arguments, hooks) = crate::routes::call_hooks(
         py,
         LoggingOperation::Completion,

@@ -1,7 +1,7 @@
 """Ordered rollout policy for routes and loggers.
 
-The first matching rule wins; unmatched contexts stay on Python. Native
-admission separately decides whether the selected implementation can execute.
+The first matching rule wins; unmatched contexts stay on Python. The catalog
+owns known implementation gaps; failures from a selected native call are terminal.
 """
 
 from __future__ import annotations
