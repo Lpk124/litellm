@@ -23,7 +23,7 @@ use crate::{
             streaming::StreamShape,
             transformation::{
                 BaseConfig, Headers, ProviderChatRequestData, ProviderChatResponseData,
-                Unsupported, ValidatedEnvironment, unsupported_message, unsupported_stream,
+                ValidatedEnvironment, reject_stream, validate_message,
             },
         },
     },
@@ -339,29 +339,27 @@ impl BaseConfig for AmazonConverseConfig {
         CONFIG_PARAMS
     }
 
-    fn unsupported_reason(
+    fn validate_request(
         &self,
         messages: &[ChatMessage],
         optional_params: &Map<String, Value>,
-    ) -> Option<Unsupported> {
-        unsupported_stream(optional_params)
-            .or_else(|| messages.iter().find_map(unsupported_message))
-            .or_else(|| {
-                messages
-                    .iter()
-                    .any(has_blank_text)
-                    .then_some(Unsupported("blank message text"))
-            })
-            .or_else(|| {
-                let conversation = build_conversation(messages);
-                let ends_on_assistant = conversation
-                    .turns
-                    .last()
-                    .is_some_and(|turn| turn.role == TurnRole::Assistant);
-                (!conversation.opens_on_user_turn() || ends_on_assistant).then_some(Unsupported(
-                    "conversation does not run user turn to user turn",
-                ))
-            })
+    ) -> Result<(), Error> {
+        reject_stream(optional_params)?;
+        messages.iter().try_for_each(validate_message)?;
+        if messages.iter().any(has_blank_text) {
+            return Err(Error::Unsupported("blank message text"));
+        }
+        let conversation = build_conversation(messages);
+        let ends_on_assistant = conversation
+            .turns
+            .last()
+            .is_some_and(|turn| turn.role == TurnRole::Assistant);
+        if !conversation.opens_on_user_turn() || ends_on_assistant {
+            return Err(Error::Unsupported(
+                "conversation does not run user turn to user turn",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -389,6 +387,19 @@ fn converse_body(conversation: &Conversation, optional_params: &Map<String, Valu
         .map(|text| json!({"text": text}))
         .collect();
 
+    let additional_fields: Map<String, Value> = optional_params
+        .iter()
+        .filter(|(name, _)| {
+            !CONFIG_PARAMS.contains(&name.as_str())
+                && name.as_str() != "stream"
+                && !SUPPORTED_PARAMS
+                    .iter()
+                    .any(|(_, field)| *field == name.as_str())
+        })
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    let reports_reasoning_usage = additional_fields.contains_key("thinking");
+
     Value::Object(Map::from_iter(
         [
             (
@@ -399,18 +410,18 @@ fn converse_body(conversation: &Conversation, optional_params: &Map<String, Valu
         ]
         .into_iter()
         .chain((!system.is_empty()).then(|| ("system".to_string(), json!(system))))
-        .chain(
-            optional_params
-                .iter()
-                .filter(|(name, _)| {
-                    !CONFIG_PARAMS.contains(&name.as_str())
-                        && name.as_str() != "stream"
-                        && !SUPPORTED_PARAMS
-                            .iter()
-                            .any(|(_, field)| *field == name.as_str())
-                })
-                .map(|(name, value)| (name.clone(), value.clone())),
-        ),
+        .chain((!additional_fields.is_empty()).then(|| {
+            (
+                "additionalModelRequestFields".to_string(),
+                Value::Object(additional_fields),
+            )
+        }))
+        .chain(reports_reasoning_usage.then(|| {
+            (
+                "additionalModelResponseFieldPaths".to_string(),
+                json!(["/usage/output_tokens_details"]),
+            )
+        })),
     ))
 }
 

@@ -244,7 +244,27 @@ async def test_unstarted_native_inference_has_no_provider_or_callback_effects(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("asynchronous", (False, True))
-@pytest.mark.parametrize("extension", (None, False, 0, {"nested": [True, None, {"value": 7}]}))
+@pytest.mark.parametrize(
+    "extension",
+    (
+        None,
+        False,
+        0,
+        {"nested": [True, None, {"value": 7}]},
+        {
+            "format": {
+                "type": "json_schema",
+                "schema": {
+                    "type": "object",
+                    "properties": {"answer": {"type": "string"}},
+                    "required": ["answer"],
+                    "additionalProperties": False,
+                },
+            },
+            "previous_message_id": None,
+        },
+    ),
+)
 async def test_native_projection_preserves_provider_extensions(
     route: Route, asynchronous: bool, recording_server: RecordingServer, extension: object
 ) -> None:
@@ -257,6 +277,7 @@ async def test_native_projection_preserves_provider_extensions(
             "provider_extension": extension,
             "extra_body": {"provider_override": extension, "temperature": 0.75},
             "temperature": 0.25,
+            "drop_params": True,
             "callbacks": [recorder],
             "litellm_metadata": {"opaque": object()},
         },
@@ -267,6 +288,7 @@ async def test_native_projection_preserves_provider_extensions(
     assert body["provider_override"] == extension
     assert body["temperature"] == 0.75
     assert "extra_body" not in body
+    assert "drop_params" not in body
     assert "callbacks" not in body
     assert "litellm_metadata" not in body
     assert "api_key" not in body

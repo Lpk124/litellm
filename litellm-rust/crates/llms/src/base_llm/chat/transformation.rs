@@ -29,9 +29,6 @@ const IGNORABLE_MESSAGE_FIELDS: &[&str] = &["name"];
 
 pub use crate::base_llm::auth::{Headers, ValidatedEnvironment};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Unsupported(pub &'static str);
-
 pub trait BaseConfig: Sync {
     fn secret_names(&self) -> Vec<&'static str>;
 
@@ -85,51 +82,54 @@ pub trait BaseConfig: Sync {
         &[]
     }
 
-    fn unsupported_reason(
+    fn validate_request(
         &self,
         messages: &[ChatMessage],
         optional_params: &Map<String, Value>,
-    ) -> Option<Unsupported> {
-        unsupported_stream(optional_params)
-            .or_else(|| messages.iter().find_map(unsupported_message))
+    ) -> Result<(), Error> {
+        reject_stream(optional_params)?;
+        messages.iter().try_for_each(validate_message)
     }
 }
 
-pub fn unsupported_stream(optional_params: &Map<String, Value>) -> Option<Unsupported> {
-    if optional_params
+pub fn reject_stream(optional_params: &Map<String, Value>) -> Result<(), Error> {
+    let streaming = optional_params
         .get(STREAM_PARAM)
         .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return Some(Unsupported("streaming"));
+        .unwrap_or(false);
+    if streaming {
+        return Err(Error::Unsupported("streaming"));
     }
-    None
+    Ok(())
 }
 
-pub fn unsupported_message(message: &ChatMessage) -> Option<Unsupported> {
+pub fn validate_message(message: &ChatMessage) -> Result<(), Error> {
     if message
         .extra
         .keys()
         .any(|key| !IGNORABLE_MESSAGE_FIELDS.contains(&key.as_str()))
     {
-        return Some(Unsupported("unrecognized message field"));
+        return Err(Error::Unsupported("unrecognized message field"));
     }
     if !matches!(message.role.as_str(), "system" | "user" | "assistant") {
-        return Some(Unsupported("unrecognized message role"));
+        return Err(Error::Unsupported("unrecognized message role"));
     }
     match &message.content {
-        None => Some(Unsupported("message without content")),
-        Some(ChatMessageContent::Text(_)) => None,
+        None => Err(Error::Unsupported("message without content")),
+        Some(ChatMessageContent::Text(_)) => Ok(()),
         Some(ChatMessageContent::Parts(parts)) if parts.is_empty() => {
-            Some(Unsupported("message without content"))
+            Err(Error::Unsupported("message without content"))
         }
-        Some(ChatMessageContent::Parts(parts)) => parts
-            .iter()
-            .any(|part| {
+        Some(ChatMessageContent::Parts(parts)) => {
+            let non_text = parts.iter().any(|part| {
                 part.get("type").and_then(Value::as_str) != Some("text")
                     || part.get("text").and_then(Value::as_str).is_none()
                     || part.as_object().is_some_and(|object| object.len() != 2)
-            })
-            .then_some(Unsupported("non-text message content")),
+            });
+            if non_text {
+                return Err(Error::Unsupported("non-text message content"));
+            }
+            Ok(())
+        }
     }
 }

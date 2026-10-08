@@ -2,7 +2,7 @@ use litellm_llms::{
     Error,
     base_llm::{
         auth::AuthScheme,
-        chat::transformation::{BaseConfig, ProviderChatResponseData, Unsupported},
+        chat::transformation::{BaseConfig, ProviderChatResponseData},
     },
     openai_like::chat::transformation::OPENAI_LIKE_CHAT_COMPLETIONS_CONFIG,
 };
@@ -41,8 +41,8 @@ fn transform_response(body: Value) -> Result<ChatCompletionsResponse, Error> {
         .transform_response("some-model", ProviderChatResponseData { body })
 }
 
-fn reason(msgs: Value, opts: Value) -> Option<Unsupported> {
-    OPENAI_LIKE_CHAT_COMPLETIONS_CONFIG.unsupported_reason(&messages(msgs), &params(opts))
+fn reason(msgs: Value, opts: Value) -> Result<(), Error> {
+    OPENAI_LIKE_CHAT_COMPLETIONS_CONFIG.validate_request(&messages(msgs), &params(opts))
 }
 
 #[rstest]
@@ -305,7 +305,7 @@ fn a_non_text_response_content_rejects() {
 fn rejects(#[case] opts: Value, #[case] expected: &'static str) {
     assert_eq!(
         reason(json!([{"role": "user", "content": "hi"}]), opts),
-        Some(Unsupported(expected))
+        Err(Error::Unsupported(expected))
     );
 }
 
@@ -322,7 +322,7 @@ fn accepts_standard_openai_params() {
                 "custom_endpoint": true,
             }),
         ),
-        None
+        Ok(())
     );
 }
 
@@ -332,7 +332,7 @@ fn preserves_tools_and_unknown_provider_parameters() {
         "provider_extension":{"nested":[true,null,7]}});
     assert_eq!(
         reason(json!([{"role":"user","content":"hi"}]), options.clone()),
-        None
+        Ok(())
     );
     let body = transform(
         "test-model",

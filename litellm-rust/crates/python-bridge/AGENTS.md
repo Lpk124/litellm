@@ -106,9 +106,9 @@ GIL handling to `litellm-host-python`.
 
 ## Provider parameters
 
-Use `routes::parameters::provider_parameters` to collect JSON-compatible provider fields from bound and prepared arguments. Extract controls and route inputs separately. Unknown fields, including explicit nulls, remain in `CallArguments`; provider field lists must never filter them out. Route-specific ownership resolves ambiguous names such as `metadata`
+Use `routes::parameters::provider_parameters` to collect JSON-compatible provider fields from bound and prepared arguments. LiteLLM controls are the union of `litellm_core_utils::params::is_control_param` (Rust-only names such as `base_url`, `callbacks`, `drop_params`) and Python's `is_litellm_owned_kwarg`; add a new control to whichever side already owns its siblings, never both. Route inputs are extracted separately. Unknown fields, including explicit nulls, remain in `CallArguments`; provider field lists must never filter them out. A `None` that came from a signature default is absence; a `None` the caller passed is an explicit null. Route-specific ownership resolves ambiguous names such as `metadata`
 
-Resolve `extra_body` before typed decoding and provider policy. Keep the resolved source when reading typed views, and never merge the original fields back after transformation or parameter removal. Extensible payload objects retain unknown fields with `serde(flatten)`; use `Recognized<T>` only for provider values whose contract permits opaque passthrough. Provider/model adaptation belongs in provider crates, and known implementation gaps belong in the Python catalog
+Inference routes resolve `extra_body` at projection, before typed decoding and provider policy, so provider code never sees the original fields. OCR routes still compose overrides at the end through `compose_body`. Extensible payload objects retain unknown fields with `serde(flatten)`; use `Recognized<T>` only for provider values whose contract permits opaque passthrough. Provider/model adaptation belongs in provider crates, and known implementation gaps belong in the Python catalog
 
 ## Data Handling
 

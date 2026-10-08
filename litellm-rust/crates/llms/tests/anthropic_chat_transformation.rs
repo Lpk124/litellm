@@ -3,7 +3,7 @@ use litellm_llms::{
     anthropic::chat::transformation::ANTHROPIC_CHAT_COMPLETIONS_CONFIG,
     base_llm::{
         auth::AuthScheme,
-        chat::transformation::{BaseConfig, ProviderChatResponseData, Unsupported},
+        chat::transformation::{BaseConfig, ProviderChatResponseData},
     },
 };
 use litellm_llms_types::formats::chat_completions::{ChatCompletionsResponse, ChatMessage};
@@ -33,8 +33,8 @@ fn transform_response(body: Value) -> Result<ChatCompletionsResponse, Error> {
         .transform_response("claude-sonnet-4-5", ProviderChatResponseData { body })
 }
 
-fn reason(msgs: Value, opts: Value) -> Option<Unsupported> {
-    ANTHROPIC_CHAT_COMPLETIONS_CONFIG.unsupported_reason(&messages(msgs), &params(opts))
+fn reason(msgs: Value, opts: Value) -> Result<(), Error> {
+    ANTHROPIC_CHAT_COMPLETIONS_CONFIG.validate_request(&messages(msgs), &params(opts))
 }
 
 #[test]
@@ -135,7 +135,7 @@ fn rejects_streaming_before_anything_else() {
             json!([{"role": "user", "content": "hi"}]),
             json!({"stream": true, "max_tokens": 16})
         ),
-        Some(Unsupported("streaming"))
+        Err(Error::Unsupported("streaming"))
     );
 }
 
@@ -146,7 +146,7 @@ fn accepts_an_explicit_stream_false() {
             json!([{"role": "user", "content": "hi"}]),
             json!({"stream": false, "max_tokens": 16})
         ),
-        None
+        Ok(())
     );
 }
 
@@ -162,7 +162,7 @@ fn accepts_an_explicit_stream_false() {
 fn preserves_provider_params_without_an_allowlist(#[case] param: Value) {
     assert_eq!(
         reason(json!([{"role": "user", "content": "hi"}]), param.clone()),
-        None
+        Ok(())
     );
     let body = transform(
         "test-model",
@@ -187,7 +187,7 @@ fn rejects_tool_calls_tool_results_and_multimodal_content() {
             ]),
             json!({})
         ),
-        Some(Unsupported("unrecognized message field"))
+        Err(Error::Unsupported("unrecognized message field"))
     );
     assert_eq!(
         reason(
@@ -197,7 +197,7 @@ fn rejects_tool_calls_tool_results_and_multimodal_content() {
             ]),
             json!({})
         ),
-        Some(Unsupported("unrecognized message field"))
+        Err(Error::Unsupported("unrecognized message field"))
     );
     assert_eq!(
         reason(
@@ -207,7 +207,7 @@ fn rejects_tool_calls_tool_results_and_multimodal_content() {
             ]}]),
             json!({})
         ),
-        Some(Unsupported("non-text message content"))
+        Err(Error::Unsupported("non-text message content"))
     );
     assert_eq!(
         reason(
@@ -217,7 +217,7 @@ fn rejects_tool_calls_tool_results_and_multimodal_content() {
             ]}]),
             json!({})
         ),
-        Some(Unsupported("non-text message content"))
+        Err(Error::Unsupported("non-text message content"))
     );
 }
 
@@ -225,14 +225,14 @@ fn rejects_tool_calls_tool_results_and_multimodal_content() {
 fn rejects_a_message_whose_content_list_is_empty() {
     assert_eq!(
         reason(json!([{"role": "user", "content": []}]), json!({})),
-        Some(Unsupported("message without content"))
+        Err(Error::Unsupported("message without content"))
     );
     assert_eq!(
         reason(
             json!([{"role": "user", "content": [{"type": "text", "text": "hi"}]}]),
             json!({})
         ),
-        None
+        Ok(())
     );
 }
 
@@ -246,7 +246,9 @@ fn rejects_a_conversation_that_does_not_open_on_a_user_turn() {
             ]),
             json!({})
         ),
-        Some(Unsupported("conversation does not open on a user turn"))
+        Err(Error::Unsupported(
+            "conversation does not open on a user turn"
+        ))
     );
 }
 
@@ -262,7 +264,7 @@ fn accepts_a_plain_text_conversation() {
             ]),
             json!({"max_tokens": 16, "temperature": 0.5})
         ),
-        None
+        Ok(())
     );
 }
 

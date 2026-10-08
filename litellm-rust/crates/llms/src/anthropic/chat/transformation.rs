@@ -24,7 +24,7 @@ use crate::{
             streaming::{ChatStream, StreamShape},
             transformation::{
                 BaseConfig, Headers, ProviderChatRequestData, ProviderChatResponseData,
-                Unsupported, ValidatedEnvironment, unsupported_message, unsupported_stream,
+                ValidatedEnvironment, reject_stream, validate_message,
             },
         },
         messages::streaming::anthropic_sse_event_stream,
@@ -197,17 +197,19 @@ impl BaseConfig for AnthropicConfig {
     /// the resolved key must not be applied over the top. Any other forwarded
     /// `authorization` is unrelated to this header and does not defer, which is
     /// also what Python does: it sends the deployment's `x-api-key` alongside.
-    fn unsupported_reason(
+    fn validate_request(
         &self,
         messages: &[ChatMessage],
         optional_params: &Map<String, Value>,
-    ) -> Option<Unsupported> {
-        unsupported_stream(optional_params)
-            .or_else(|| messages.iter().find_map(unsupported_message))
-            .or_else(|| {
-                (!build_conversation(messages).opens_on_user_turn())
-                    .then_some(Unsupported("conversation does not open on a user turn"))
-            })
+    ) -> Result<(), Error> {
+        reject_stream(optional_params)?;
+        messages.iter().try_for_each(validate_message)?;
+        if !build_conversation(messages).opens_on_user_turn() {
+            return Err(Error::Unsupported(
+                "conversation does not open on a user turn",
+            ));
+        }
+        Ok(())
     }
 }
 

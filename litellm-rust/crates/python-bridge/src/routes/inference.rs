@@ -14,9 +14,9 @@ use crate::{
 };
 
 pub(super) struct InferenceHost {
-    pub request: Py<PyAny>,
+    pub request: Py<PyDict>,
     module: &'static str,
-    supplied: BTreeSet<String>,
+    defaulted: BTreeSet<String>,
 }
 
 pub(super) struct ProjectedCall {
@@ -27,14 +27,14 @@ pub(super) struct ProjectedCall {
 
 impl InferenceHost {
     pub fn new(
-        request: Py<PyAny>,
+        request: Bound<'_, PyDict>,
         module: &'static str,
         kwargs: &Bound<'_, PyDict>,
     ) -> PyResult<Self> {
         Ok(Self {
-            request,
+            defaulted: super::parameters::defaulted_keys(&request, kwargs)?,
+            request: request.unbind(),
             module,
-            supplied: super::parameters::supplied_keys(kwargs)?,
         })
     }
 
@@ -93,21 +93,8 @@ impl InferenceHost {
         arguments: &Bound<'py, PyDict>,
         name: &str,
     ) -> PyResult<Option<Bound<'py, PyAny>>> {
-        let request = self.request.bind(py);
-        if let Some(value) = lookup(arguments, request, name)? {
-            return Ok((!value.is_none()).then_some(value));
-        }
-        if request.is_instance_of::<PyDict>() {
-            return Ok(None);
-        }
-        let parameter = request
-            .getattr("parameters")?
-            .call_method1("get", (name,))?;
-        if !parameter.is_none() {
-            return Ok(Some(parameter));
-        }
-        let extra = request.getattr("kwargs")?.call_method1("get", (name,))?;
-        Ok((!extra.is_none()).then_some(extra))
+        Ok(lookup(arguments, self.request.bind(py).as_any(), name)?
+            .filter(|value| !value.is_none()))
     }
 
     pub fn parameters(
@@ -119,8 +106,8 @@ impl InferenceHost {
         super::parameters::provider_parameters(
             py,
             arguments,
-            self.request.bind(py).cast::<PyDict>()?,
-            &self.supplied,
+            self.request.bind(py),
+            &self.defaulted,
             &[input],
             &["metadata"],
         )

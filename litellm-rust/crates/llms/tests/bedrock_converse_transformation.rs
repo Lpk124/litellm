@@ -3,7 +3,7 @@ use litellm_llms::{
     Error,
     base_llm::{
         auth::AuthScheme,
-        chat::transformation::{BaseConfig, ProviderChatResponseData, Unsupported},
+        chat::transformation::{BaseConfig, ProviderChatResponseData},
     },
     bedrock::chat::converse_transformation::BEDROCK_CHAT_COMPLETIONS_CONFIG,
 };
@@ -40,8 +40,8 @@ fn transform_response(body: Value) -> Result<ChatCompletionsResponse, Error> {
     )
 }
 
-fn reason(msgs: Value, opts: Value) -> Option<Unsupported> {
-    BEDROCK_CHAT_COMPLETIONS_CONFIG.unsupported_reason(&messages(msgs), &params(opts))
+fn reason(msgs: Value, opts: Value) -> Result<(), Error> {
+    BEDROCK_CHAT_COMPLETIONS_CONFIG.validate_request(&messages(msgs), &params(opts))
 }
 
 #[test]
@@ -116,7 +116,7 @@ fn rejects_streaming() {
             json!([{"role": "user", "content": "hi"}]),
             json!({"stream": true})
         ),
-        Some(Unsupported("streaming"))
+        Err(Error::Unsupported("streaming"))
     );
 }
 
@@ -132,12 +132,33 @@ fn rejects_streaming() {
 fn preserves_provider_params_without_an_allowlist(#[case] param: Value) {
     assert_eq!(
         reason(json!([{"role": "user", "content": "hi"}]), param.clone()),
-        None
+        Ok(())
     );
     let body = transform(json!([{"role":"user","content":"hi"}]), param.clone());
     for (name, value) in params(param) {
-        assert_eq!(body[&name], value);
+        assert_eq!(body["additionalModelRequestFields"][&name], value);
+        assert!(
+            body.get(&name).is_none(),
+            "{name} must not reach the top level"
+        );
     }
+}
+
+#[test]
+fn thinking_requests_the_reasoning_usage_path_python_requests() {
+    let body = transform(
+        json!([{"role":"user","content":"hi"}]),
+        json!({"thinking": {"type": "enabled", "budget_tokens": 1024}}),
+    );
+    assert_eq!(
+        body["additionalModelResponseFieldPaths"],
+        json!(["/usage/output_tokens_details"])
+    );
+    assert!(
+        transform(json!([{"role":"user","content":"hi"}]), json!({"topK": 40}))
+            .get("additionalModelResponseFieldPaths")
+            .is_none()
+    );
 }
 
 #[rstest]
@@ -150,7 +171,7 @@ fn rejects_blank_text_rather_than_substituting_the_anthropic_placeholder(#[case]
             json!([{"role": "user", "content": content}, {"role": "user", "content": "hi"}]),
             json!({})
         ),
-        Some(Unsupported("blank message text")),
+        Err(Error::Unsupported("blank message text")),
         "expected blank content {content} to reject"
     );
 }
@@ -162,14 +183,14 @@ fn rejects_a_message_whose_content_list_is_empty() {
     // host before the call rather than an error after it.
     assert_eq!(
         reason(json!([{"role": "user", "content": []}]), json!({})),
-        Some(Unsupported("message without content"))
+        Err(Error::Unsupported("message without content"))
     );
     assert_eq!(
         reason(
             json!([{"role": "user", "content": [{"type": "text", "text": "hi"}]}]),
             json!({})
         ),
-        None
+        Ok(())
     );
 }
 
@@ -183,7 +204,7 @@ fn rejects_a_conversation_that_opens_or_closes_on_an_assistant_turn() {
             ]),
             json!({})
         ),
-        Some(Unsupported(
+        Err(Error::Unsupported(
             "conversation does not run user turn to user turn"
         ))
     );
@@ -195,7 +216,7 @@ fn rejects_a_conversation_that_opens_or_closes_on_an_assistant_turn() {
             ]),
             json!({})
         ),
-        Some(Unsupported(
+        Err(Error::Unsupported(
             "conversation does not run user turn to user turn"
         ))
     );
@@ -213,7 +234,7 @@ fn accepts_a_user_to_user_text_conversation() {
             ]),
             json!({"maxTokens": 16})
         ),
-        None
+        Ok(())
     );
 }
 
@@ -455,7 +476,7 @@ fn rejects_a_cache_control_message_so_widening_the_gate_is_a_red_test() {
             ]}]),
             json!({})
         ),
-        Some(Unsupported("non-text message content"))
+        Err(Error::Unsupported("non-text message content"))
     );
 }
 
@@ -544,7 +565,7 @@ fn accepts_aws_call_configuration_without_serializing_it() {
             json!([{"role": "user", "content": "hi"}]),
             call_config.clone()
         ),
-        None
+        Ok(())
     );
     let body = transform(json!([{"role": "user", "content": "hi"}]), call_config);
     assert_eq!(
