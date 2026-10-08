@@ -105,11 +105,15 @@ def _drop_logging_obj_from_kwargs(request_kwargs: dict[str, object]) -> dict[str
 
 
 def _is_response_cache_excluded(model: str | None, kwargs: Mapping[str, object]) -> bool:
+    from litellm.llms.github_copilot.per_user_auth import is_github_copilot_per_user_request
+
     custom_llm_provider: Final = kwargs.get("custom_llm_provider")
     model_provider: Final = model.split("/", maxsplit=1)[0] if model is not None else None
     return (
-        isinstance(custom_llm_provider, str) and custom_llm_provider in RESPONSE_CACHE_EXCLUDED_PROVIDERS
-    ) or model_provider in RESPONSE_CACHE_EXCLUDED_PROVIDERS
+        (isinstance(custom_llm_provider, str) and custom_llm_provider in RESPONSE_CACHE_EXCLUDED_PROVIDERS)
+        or model_provider in RESPONSE_CACHE_EXCLUDED_PROVIDERS
+        or is_github_copilot_per_user_request(kwargs)
+    )
 
 
 def _is_chat_completion_cached_dict(cached_result: dict) -> bool:

@@ -290,6 +290,18 @@ def _should_run_cooldown_logic(
         )
         return False
 
+    if isinstance(
+        original_exception,
+        (
+            litellm.CallerCredentialAuthenticationError,
+            litellm.CallerCredentialRateLimitError,
+        ),
+    ):
+        verbose_router_logger.debug(
+            "Should Not Run Cooldown Logic: caller-credential errors are scoped to one user's connection"
+        )
+        return False
+
     #########################################################
     # If time_to_cooldown is 0 or 0.0000000, don't run cooldown logic
     #########################################################

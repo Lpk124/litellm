@@ -2463,3 +2463,16 @@ async def test_router_fallbacks_with_cooldowns_and_dynamic_credentials():
     await asyncio.sleep(1)
     cooled_down = await async_get_cooldown_deployments(litellm_router_instance=router, parent_otel_span=None)
     assert len(cooled_down) == 1 and cooled_down[0] in {"123", "456"}
+
+
+@pytest.mark.parametrize(
+    "exception,status",
+    [
+        (litellm.CallerCredentialAuthenticationError(message="reconnect", llm_provider="github_copilot", model=""), 401),
+        (litellm.CallerCredentialRateLimitError(message="slow down", llm_provider="github_copilot", model=""), 429),
+    ],
+)
+def test_caller_credential_errors_never_cool_down_the_shared_deployment(single_deployment_router, exception, status):
+    """A per-user credential failure is scoped to one caller's stored token; cooling down the
+    shared deployment would punish every other user on the group."""
+    assert _should_run_cooldown_logic(single_deployment_router, "dep-1", status, exception) is False

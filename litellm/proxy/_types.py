@@ -919,6 +919,12 @@ class LiteLLMRoutes(enum.Enum):
             # Create/update/delete and test_connection stay admin-only.
             "/search_tools/list",
             "/search_tools/ui/available_providers",
+            # Per-user provider connections are always scoped to the calling
+            # user's own stored tokens. View-only users do not get these.
+            "/credentials/user_connections",
+            "/credentials/{credential_name}/user_connection/start",
+            "/credentials/{credential_name}/user_connection/poll",
+            "/credentials/{credential_name}/user_connection",
         ]
         + spend_tracking_routes
         + key_management_routes
