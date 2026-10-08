@@ -12,6 +12,7 @@ class GatewayRequestKey:
     date: str
     category: str
     route: str
+    status_code: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +43,11 @@ class GatewayRequestDailyEntry(LiteLLMBaseModel):
     failed_requests: int = 0
 
 
+class GatewayRequestStatusCodeEntry(LiteLLMBaseModel):
+    status_code: int
+    failed_requests: int = 0
+
+
 class GatewayRequestActivityResponse(LiteLLMBaseModel):
     """Response for GET /gateway/daily/activity."""
 
@@ -49,3 +55,4 @@ class GatewayRequestActivityResponse(LiteLLMBaseModel):
     total_failed_requests: int = 0
     by_date: tuple[GatewayRequestDailyEntry, ...] = ()
     by_route: tuple[GatewayRequestBreakdownEntry, ...] = ()
+    by_status_code: tuple[GatewayRequestStatusCodeEntry, ...] = ()

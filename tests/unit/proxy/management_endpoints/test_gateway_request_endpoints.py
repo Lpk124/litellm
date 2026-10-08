@@ -1,4 +1,5 @@
 import os
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -24,10 +25,14 @@ from fastapi.testclient import TestClient
 from litellm.proxy._types import LitellmUserRoles, UserAPIKeyAuth
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
 from litellm.proxy.management_endpoints.gateway_request_endpoints import (
+    _AGGREGATE_SQL,
+    _STATUS_CODE_AGGREGATE_SQL,
     _AggregateRow,
     _default_range,
     _fold_by_date,
     _fold_by_route,
+    _fold_by_status_code,
+    _StatusCodeAggregateRow,
     get_gateway_daily_activity,
     router,
 )
@@ -76,10 +81,36 @@ def _admin() -> UserAPIKeyAuth:
     return UserAPIKeyAuth(api_key="sk-test", user_role=LitellmUserRoles.PROXY_ADMIN)
 
 
-def _prisma_returning(rows: list) -> MagicMock:
+def _prisma_returning(rows: Sequence[Mapping[str, str | int]] | None) -> MagicMock:
     client = MagicMock()
     client.db = MagicMock()
-    client.db.query_raw = AsyncMock(return_value=rows)
+
+    async def query_raw(query: str, *_args: str) -> Sequence[Mapping[str, str | int]] | None:
+        if query == _AGGREGATE_SQL:
+            return rows
+        if query == _STATUS_CODE_AGGREGATE_SQL:
+            return []
+        raise AssertionError(f"Unexpected gateway activity query: {query}")
+
+    client.db.query_raw = AsyncMock(side_effect=query_raw)
+    return client
+
+
+def _prisma_returning_with_status_codes(
+    rows: Sequence[Mapping[str, str | int]],
+    status_code_rows: Sequence[Mapping[str, int]],
+) -> MagicMock:
+    client = MagicMock()
+    client.db = MagicMock()
+
+    async def query_raw(query: str, *_args: str) -> Sequence[Mapping[str, str | int]]:
+        if query == _AGGREGATE_SQL:
+            return rows
+        if query == _STATUS_CODE_AGGREGATE_SQL:
+            return status_code_rows
+        raise AssertionError(f"Unexpected gateway activity query: {query}")
+
+    client.db.query_raw = AsyncMock(side_effect=query_raw)
     return client
 
 
@@ -155,6 +186,18 @@ class TestFoldByRoute:
         assert [entry.route for entry in _fold_by_route(tuple(reversed(rows)))] == expected
 
 
+class TestFoldByStatusCode:
+    def test_orders_by_failed_count_then_status_code(self):
+        folded = _fold_by_status_code(
+            (
+                _StatusCodeAggregateRow(status_code=503, failed_requests=1),
+                _StatusCodeAggregateRow(status_code=500, failed_requests=2),
+                _StatusCodeAggregateRow(status_code=429, failed_requests=2),
+            )
+        )
+        assert [(entry.status_code, entry.failed_requests) for entry in folded] == [(429, 2), (500, 2), (503, 1)]
+
+
 class TestGatewayDailyActivityEndpoint:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -218,15 +261,24 @@ class TestGatewayDailyActivityEndpoint:
                 "failed_requests": 0,
             },
         ]
-        with patch("litellm.proxy.proxy_server.prisma_client", _prisma_returning(rows)):
+        prisma = _prisma_returning_with_status_codes(
+            rows,
+            [
+                {"status_code": 429, "failed_requests": 3},
+                {"status_code": 500, "failed_requests": 1},
+            ],
+        )
+        with patch("litellm.proxy.proxy_server.prisma_client", prisma):
             response = await get_gateway_daily_activity(user_api_key_dict=_admin())
 
         assert response.total_successful_requests == 16
         assert response.total_failed_requests == 4
         assert sum(entry.successful_requests for entry in response.by_date) == 16
         assert sum(entry.successful_requests for entry in response.by_route) == 16
+        assert [(entry.status_code, entry.failed_requests) for entry in response.by_status_code] == [(429, 3), (500, 1)]
         assert [entry.date for entry in response.by_date] == ["2026-08-03", "2026-08-04"]
         assert [entry.route for entry in response.by_route] == ["/chat/completions", "/embeddings"]
+        assert prisma.db.query_raw.call_args_list[1].args[0] == _STATUS_CODE_AGGREGATE_SQL
 
     @pytest.mark.asyncio
     async def test_a_null_result_set_is_not_an_error(self):
@@ -236,6 +288,7 @@ class TestGatewayDailyActivityEndpoint:
         assert response.total_successful_requests == 0
         assert response.by_date == ()
         assert response.by_route == ()
+
 
 class TestGatewayDailyActivityRoute:
     """
@@ -258,8 +311,14 @@ class TestGatewayDailyActivityRoute:
                 params={"start_date": "2026-01-01", "end_date": "2026-01-31"},
             )
         assert response.status_code == 200
-        _, start, end = prisma.db.query_raw.call_args.args
-        assert (start, end) == ("2026-01-01", "2026-01-31")
+        assert [(call.args[1], call.args[2]) for call in prisma.db.query_raw.call_args_list] == [
+            ("2026-01-01", "2026-01-31"),
+            ("2026-01-01", "2026-01-31"),
+        ]
+        assert [call.args[0] for call in prisma.db.query_raw.call_args_list] == [
+            _AGGREGATE_SQL,
+            _STATUS_CODE_AGGREGATE_SQL,
+        ]
 
     def test_omitted_dates_fall_back_to_the_default_window(self, frozen_clock):
         prisma = _prisma_returning([])
@@ -269,11 +328,17 @@ class TestGatewayDailyActivityRoute:
         with patch("litellm.proxy.proxy_server.prisma_client", prisma):
             response = TestClient(app).get("/gateway/daily/activity")
         assert response.status_code == 200
-        _, start, end = prisma.db.query_raw.call_args.args
-        assert (start, end) == _FROZEN_RANGE
+        assert [(call.args[1], call.args[2]) for call in prisma.db.query_raw.call_args_list] == [
+            _FROZEN_RANGE,
+            _FROZEN_RANGE,
+        ]
+        assert [call.args[0] for call in prisma.db.query_raw.call_args_list] == [
+            _AGGREGATE_SQL,
+            _STATUS_CODE_AGGREGATE_SQL,
+        ]
 
     def test_serialized_response_carries_the_documented_shape(self):
-        prisma = _prisma_returning(
+        prisma = _prisma_returning_with_status_codes(
             [
                 {
                     "date": "2026-08-04",
@@ -282,7 +347,8 @@ class TestGatewayDailyActivityRoute:
                     "successful_requests": 7,
                     "failed_requests": 3,
                 }
-            ]
+            ],
+            [{"status_code": 500, "failed_requests": 3}],
         )
         app = FastAPI()
         app.include_router(router)
@@ -302,4 +368,5 @@ class TestGatewayDailyActivityRoute:
                     "failed_requests": 3,
                 }
             ],
+            "by_status_code": [{"status_code": 500, "failed_requests": 3}],
         }

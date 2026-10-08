@@ -26,6 +26,7 @@ from litellm.types.proxy.gateway_requests import (
     GatewayRequestActivityResponse,
     GatewayRequestBreakdownEntry,
     GatewayRequestDailyEntry,
+    GatewayRequestStatusCodeEntry,
 )
 
 router: Final = APIRouter()
@@ -44,6 +45,15 @@ _AGGREGATE_SQL: Final = """
     GROUP BY date, category, route
 """
 
+_STATUS_CODE_AGGREGATE_SQL: Final = """
+    SELECT
+        status_code,
+        SUM(failed_requests)::bigint AS failed_requests
+    FROM "LiteLLM_DailyGatewayFailedRequests"
+    WHERE date >= $1 AND date <= $2
+    GROUP BY status_code
+"""
+
 
 class _AggregateRow(LiteLLMBaseModel):
     """Validates one query_raw row so the handler works with typed values, not Any."""
@@ -55,7 +65,13 @@ class _AggregateRow(LiteLLMBaseModel):
     failed_requests: int
 
 
+class _StatusCodeAggregateRow(LiteLLMBaseModel):
+    status_code: int
+    failed_requests: int
+
+
 _ROWS_ADAPTER: Final = TypeAdapter(tuple[_AggregateRow, ...])
+_STATUS_CODE_ROWS_ADAPTER: Final = TypeAdapter(tuple[_StatusCodeAggregateRow, ...])
 
 
 def _default_range() -> tuple[str, str]:
@@ -92,6 +108,15 @@ def _fold_by_route(rows: Sequence[_AggregateRow]) -> tuple[GatewayRequestBreakdo
     return tuple(sorted(entries, key=lambda entry: entry.successful_requests, reverse=True))
 
 
+def _fold_by_status_code(
+    rows: Sequence[_StatusCodeAggregateRow],
+) -> tuple[GatewayRequestStatusCodeEntry, ...]:
+    return tuple(
+        GatewayRequestStatusCodeEntry(status_code=row.status_code, failed_requests=row.failed_requests)
+        for row in sorted(rows, key=lambda row: (-row.failed_requests, row.status_code))
+    )
+
+
 @router.get(
     "/gateway/daily/activity",
     tags=["Budget & Spend Tracking"],
@@ -123,13 +148,21 @@ async def get_gateway_daily_activity(
         raise HTTPException(status_code=500, detail=CommonProxyErrors.db_not_connected_error.value)
 
     default_start, default_end = _default_range()
+    selected_start: Final = start_date or default_start
+    selected_end: Final = end_date or default_end
     raw_rows: Final = await prisma_client.db.query_raw(  # pyright: ignore[reportAny]  # untyped prisma client
         _AGGREGATE_SQL,
-        start_date or default_start,
-        end_date or default_end,
+        selected_start,
+        selected_end,
     )
     # Every downstream use is typed: the adapter returns _AggregateRow or raises.
     rows: Final = _ROWS_ADAPTER.validate_python(raw_rows or ())
+    raw_status_code_rows: Final = await prisma_client.db.query_raw(  # pyright: ignore[reportAny]  # untyped client
+        _STATUS_CODE_AGGREGATE_SQL,
+        selected_start,
+        selected_end,
+    )
+    status_code_rows: Final = _STATUS_CODE_ROWS_ADAPTER.validate_python(raw_status_code_rows or ())
     verbose_proxy_logger.debug("/gateway/daily/activity - aggregated %d rows", len(rows))
 
     return GatewayRequestActivityResponse(
@@ -137,4 +170,5 @@ async def get_gateway_daily_activity(
         total_failed_requests=sum(row.failed_requests for row in rows),
         by_date=_fold_by_date(rows),
         by_route=_fold_by_route(rows),
+        by_status_code=_fold_by_status_code(status_code_rows),
     )
