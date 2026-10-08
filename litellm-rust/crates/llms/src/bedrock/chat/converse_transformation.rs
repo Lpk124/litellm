@@ -399,12 +399,18 @@ fn converse_body(conversation: &Conversation, optional_params: &Map<String, Valu
         ]
         .into_iter()
         .chain((!system.is_empty()).then(|| ("system".to_string(), json!(system))))
-        .chain(optional_params.iter().filter_map(|(name, value)| {
-            (!CONFIG_PARAMS.contains(&name.as_str())
-                && name != "stream"
-                && !SUPPORTED_PARAMS.iter().any(|(_, field)| *field == name))
-            .then(|| (name.clone(), value.clone()))
-        })),
+        .chain(
+            optional_params
+                .iter()
+                .filter(|(name, _)| {
+                    !CONFIG_PARAMS.contains(&name.as_str())
+                        && name.as_str() != "stream"
+                        && !SUPPORTED_PARAMS
+                            .iter()
+                            .any(|(_, field)| *field == name.as_str())
+                })
+                .map(|(name, value)| (name.clone(), value.clone())),
+        ),
     ))
 }
 

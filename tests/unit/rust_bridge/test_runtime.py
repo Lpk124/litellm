@@ -181,7 +181,10 @@ async def test_shipped_python_routes_never_load_native(monkeypatch: pytest.Monke
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("asynchronous", (False, True))
-@pytest.mark.parametrize("effect", (ValueError("unsupported parameter"), RuntimeError("setup failed")))
+@pytest.mark.parametrize(
+    "effect",
+    (ValueError("unsupported parameter"), RuntimeError("setup failed"), NotImplementedError("native backend unavailable")),
+)
 async def test_native_failure_preserves_identity_without_python_replay(asynchronous: bool, effect: Exception) -> None:
     calls: Final = recorder(effect)
 

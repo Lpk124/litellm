@@ -25,7 +25,8 @@ fn run_public(
     let host = InferenceHost::new(
         request.clone().unbind(),
         "litellm.rust_bridge.responses.route_host",
-    );
+        &kwargs,
+    )?;
     let cache_call_type = if asynchronous {
         "aresponses"
     } else {

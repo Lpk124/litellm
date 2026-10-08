@@ -63,7 +63,7 @@ def run(
     match selected:
         case Decision.PYTHON:
             return python()
-        case Decision.RUST_WITH_FALLBACK | Decision.RUST_REQUIRED:
+        case Decision.RUST_IF_AVAILABLE | Decision.RUST_REQUIRED:
             result: Final = _attempt_native(context, binding, native)
             if isinstance(result, RustHandled) or selected is Decision.RUST_REQUIRED:
                 return _required(result, context)
@@ -87,7 +87,7 @@ async def arun(
     match selected:
         case Decision.PYTHON:
             return await python()
-        case Decision.RUST_WITH_FALLBACK | Decision.RUST_REQUIRED:
+        case Decision.RUST_IF_AVAILABLE | Decision.RUST_REQUIRED:
             result: Final = await _aattempt_native(context, binding, native)
             if isinstance(result, RustHandled) or selected is Decision.RUST_REQUIRED:
                 return _required(result, context)

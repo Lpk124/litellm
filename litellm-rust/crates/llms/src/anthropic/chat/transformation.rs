@@ -31,16 +31,6 @@ use crate::{
     },
 };
 
-/// Anthropic parameter names, post `map_openai_params`, that the Rust path can
-/// place verbatim in the Messages body.
-///
-/// `top_k` is deliberately absent even though the Messages API takes it.
-/// `temperature` and `top_p` reach this gate already resolved, because
-/// `map_openai_params` runs first and applies `_apply_sampling_param` to them.
-/// `top_k` bypasses `map_openai_params` entirely, so Python applies that same
-/// per-model gate inside `transform_request`, the function this route replaces.
-/// Forwarding it would send `top_k` to a model that removed sampling params and
-/// take a 400 after the call, where Python drops it and succeeds.
 const SUPPORTED_PARAMS: &[(&str, &str)] = &[
     ("max_tokens", "max_tokens"),
     ("temperature", "temperature"),

@@ -21,7 +21,7 @@ class Rollout(Enum):
 
 class Decision(Enum):
     PYTHON = auto()
-    RUST_WITH_FALLBACK = auto()
+    RUST_IF_AVAILABLE = auto()
     RUST_REQUIRED = auto()
 
 
@@ -63,7 +63,7 @@ def decide(
                 if process_override is not None
                 else rollout is Rollout.RUST_OPT_OUT
             )
-            return Decision.RUST_WITH_FALLBACK if switch else Decision.PYTHON
+            return Decision.RUST_IF_AVAILABLE if switch else Decision.PYTHON
         case _:
             assert_never(rollout)
 

@@ -48,7 +48,7 @@ def test_shipped_decisions(
     elif route is Route.MESSAGES and provider == "anthropic":
         assert catalog.rollout(context) is Rollout.RUST_OPT_IN
         opted_in: Final = environment == "1" or (environment is None and process is True)
-        assert catalog.decision(context) is (Decision.RUST_WITH_FALLBACK if opted_in else Decision.PYTHON)
+        assert catalog.decision(context) is (Decision.RUST_IF_AVAILABLE if opted_in else Decision.PYTHON)
     else:
         assert catalog.rollout(context) is Rollout.PYTHON_ONLY
         assert catalog.decision(context) is Decision.PYTHON
@@ -67,7 +67,7 @@ def test_logger_rollout_obeys_the_global_switch() -> None:
     assert catalog.rollout(LoggerContext()) is Rollout.RUST_OPT_IN
     assert catalog.decision(LoggerContext()) is Decision.PYTHON
     configuration.rust(True)
-    assert catalog.decision(LoggerContext()) is Decision.RUST_WITH_FALLBACK
+    assert catalog.decision(LoggerContext()) is Decision.RUST_IF_AVAILABLE
 
 
 @pytest.mark.parametrize(
@@ -135,10 +135,10 @@ def test_mixed_rules_select_only_the_matching_domain(context: Context, expected:
         (Rollout.PYTHON_ONLY, True, "1", Decision.PYTHON),
         (Rollout.RUST_REQUIRED, False, "0", Decision.RUST_REQUIRED),
         (Rollout.RUST_OPT_IN, None, None, Decision.PYTHON),
-        (Rollout.RUST_OPT_OUT, None, None, Decision.RUST_WITH_FALLBACK),
-        (Rollout.RUST_OPT_IN, True, None, Decision.RUST_WITH_FALLBACK),
+        (Rollout.RUST_OPT_OUT, None, None, Decision.RUST_IF_AVAILABLE),
+        (Rollout.RUST_OPT_IN, True, None, Decision.RUST_IF_AVAILABLE),
         (Rollout.RUST_OPT_OUT, False, None, Decision.PYTHON),
-        (Rollout.RUST_OPT_IN, False, "1", Decision.RUST_WITH_FALLBACK),
+        (Rollout.RUST_OPT_IN, False, "1", Decision.RUST_IF_AVAILABLE),
         (Rollout.RUST_OPT_OUT, True, "0", Decision.PYTHON),
     ),
 )

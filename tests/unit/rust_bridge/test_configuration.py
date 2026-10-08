@@ -32,14 +32,14 @@ Decision: Final = configuration.Decision
         (Rollout.PYTHON_ONLY, True, True, Decision.PYTHON),
         (Rollout.RUST_REQUIRED, False, False, Decision.RUST_REQUIRED),
         (Rollout.RUST_OPT_IN, None, None, Decision.PYTHON),
-        (Rollout.RUST_OPT_IN, None, True, Decision.RUST_WITH_FALLBACK),
-        (Rollout.RUST_OPT_IN, True, None, Decision.RUST_WITH_FALLBACK),
+        (Rollout.RUST_OPT_IN, None, True, Decision.RUST_IF_AVAILABLE),
+        (Rollout.RUST_OPT_IN, True, None, Decision.RUST_IF_AVAILABLE),
         (Rollout.RUST_OPT_IN, True, False, Decision.PYTHON),
-        (Rollout.RUST_OPT_IN, False, True, Decision.RUST_WITH_FALLBACK),
-        (Rollout.RUST_OPT_OUT, None, None, Decision.RUST_WITH_FALLBACK),
+        (Rollout.RUST_OPT_IN, False, True, Decision.RUST_IF_AVAILABLE),
+        (Rollout.RUST_OPT_OUT, None, None, Decision.RUST_IF_AVAILABLE),
         (Rollout.RUST_OPT_OUT, None, False, Decision.PYTHON),
         (Rollout.RUST_OPT_OUT, False, None, Decision.PYTHON),
-        (Rollout.RUST_OPT_OUT, False, True, Decision.RUST_WITH_FALLBACK),
+        (Rollout.RUST_OPT_OUT, False, True, Decision.RUST_IF_AVAILABLE),
         (Rollout.RUST_OPT_OUT, True, False, Decision.PYTHON),
     ),
 )
@@ -54,7 +54,7 @@ def test_decide_precedence(
 
 def test_release_default_keeps_opt_in_routes_on_python() -> None:
     assert configuration.decision(Rollout.RUST_OPT_IN) is Decision.PYTHON
-    assert configuration.decision(Rollout.RUST_OPT_OUT) is Decision.RUST_WITH_FALLBACK
+    assert configuration.decision(Rollout.RUST_OPT_OUT) is Decision.RUST_IF_AVAILABLE
     assert configuration.rust_enabled() is False
 
 
@@ -69,7 +69,7 @@ def test_opt_out_route_configuration(
         configuration.rust(process)
 
     expected: Final = (
-        Decision.RUST_WITH_FALLBACK
+        Decision.RUST_IF_AVAILABLE
         if environment == "1" or (environment is None and process is not False)
         else Decision.PYTHON
     )
@@ -103,7 +103,7 @@ def test_invalid_environment_value_is_ignored(monkeypatch: pytest.MonkeyPatch, v
     monkeypatch.setenv("LITELLM_RUST", value)
 
     assert configuration.rust_enabled() is False
-    assert configuration.decision(Rollout.RUST_OPT_OUT) is Decision.RUST_WITH_FALLBACK
+    assert configuration.decision(Rollout.RUST_OPT_OUT) is Decision.RUST_IF_AVAILABLE
     configuration.rust(True)
     assert configuration.rust_enabled() is True
 

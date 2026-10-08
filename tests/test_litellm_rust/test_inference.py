@@ -244,10 +244,10 @@ async def test_unstarted_native_inference_has_no_provider_or_callback_effects(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("asynchronous", (False, True))
+@pytest.mark.parametrize("extension", (None, False, 0, {"nested": [True, None, {"value": 7}]}))
 async def test_native_projection_preserves_provider_extensions(
-    route: Route, asynchronous: bool, recording_server: RecordingServer
+    route: Route, asynchronous: bool, recording_server: RecordingServer, extension: object
 ) -> None:
-    extension: Final = {"nested": [True, None, {"value": 7}]}
     recorder: Final = RecordingLogger()
     await execute(
         route,

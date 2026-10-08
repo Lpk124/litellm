@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use litellm_core_utils::get_llm_provider_logic::get_custom_llm_provider;
 use litellm_host_python::{from_py, lookup, to_py};
 use litellm_http::transport::Error as TransportError;
@@ -14,6 +16,7 @@ use crate::{
 pub(super) struct InferenceHost {
     pub request: Py<PyAny>,
     module: &'static str,
+    supplied: BTreeSet<String>,
 }
 
 pub(super) struct ProjectedCall {
@@ -23,8 +26,16 @@ pub(super) struct ProjectedCall {
 }
 
 impl InferenceHost {
-    pub fn new(request: Py<PyAny>, module: &'static str) -> Self {
-        Self { request, module }
+    pub fn new(
+        request: Py<PyAny>,
+        module: &'static str,
+        kwargs: &Bound<'_, PyDict>,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            request,
+            module,
+            supplied: super::parameters::supplied_keys(kwargs)?,
+        })
     }
 
     pub fn project(
@@ -105,59 +116,15 @@ impl InferenceHost {
         arguments: &Bound<'_, PyDict>,
         input: &str,
     ) -> PyResult<Map<String, Value>> {
-        let owned = py
-            .import("litellm.types.utils")?
-            .getattr("is_litellm_owned_kwarg")?;
-        let request = self.request.bind(py).cast::<PyDict>()?;
-        let names = request
-            .keys()
-            .iter()
-            .chain(arguments.keys().iter())
-            .map(|key| key.extract::<String>())
-            .collect::<PyResult<std::collections::BTreeSet<_>>>()?;
-        let params: litellm_core_utils::call_arguments::CallArguments = names
-            .into_iter()
-            .filter_map(|name| {
-                if name == input
-                    || litellm_core_utils::params::is_control_param(&name)
-                    || matches!(
-                        name.as_str(),
-                        "model"
-                            | "base_url"
-                            | "default_headers"
-                            | "api_version"
-                            | "organization"
-                            | "deployment_id"
-                            | "callbacks"
-                            | "success_callback"
-                            | "failure_callback"
-                    )
-                {
-                    return None;
-                }
-                if name != "metadata" {
-                    match owned
-                        .call1((&name,))
-                        .and_then(|value| value.extract::<bool>())
-                    {
-                        Ok(true) => return None,
-                        Ok(false) => (),
-                        Err(error) => return Some(Err(error)),
-                    }
-                }
-                match self.argument(py, arguments, &name) {
-                    Ok(Some(value)) => Some(from_py(&value).map(|value| (name, value))),
-                    Ok(None) => None,
-                    Err(error) => Some(Err(error)),
-                }
-            })
-            .collect::<PyResult<_>>()?;
-        match litellm_core_utils::call_arguments::compose_body(&params, &serde_json::json!({}), &[])
-            .map_err(|error| PyValueError::new_err(error.to_string()))?
-        {
-            Value::Object(fields) => Ok(fields),
-            _ => unreachable!(),
-        }
+        super::parameters::provider_parameters(
+            py,
+            arguments,
+            self.request.bind(py).cast::<PyDict>()?,
+            &self.supplied,
+            &[input],
+            &["metadata"],
+        )
+        .map(Into::into)
     }
 
     pub fn response(&self, py: Python<'_>, response: &impl Serialize) -> PyResult<Py<PyAny>> {
