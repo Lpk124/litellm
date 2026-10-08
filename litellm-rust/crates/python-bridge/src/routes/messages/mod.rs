@@ -57,7 +57,7 @@ fn run_messages(
                 },
             ))
         },
-        MessagesPythonHost::new(request.unbind(), asynchronous),
+        MessagesPythonHost::new(request.unbind(), asynchronous, &kwargs)?,
         hooks,
         asynchronous,
     )

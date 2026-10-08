@@ -1,4 +1,9 @@
-use crate::cache::{CacheCall, Cached, PythonCache, Selection};
+use std::collections::BTreeSet;
+
+use crate::{
+    cache::{CacheCall, Cached, PythonCache, Selection},
+    routes::parameters::{provider_parameters, supplied_keys},
+};
 use litellm_host_python::{PythonHostCalls, PythonOwned};
 
 use bytes::Bytes;
@@ -25,31 +30,6 @@ use crate::{
 
 const ROUTE_HOST_MODULE: &str = "litellm.rust_bridge.messages.route_host";
 const REQUEST_ERROR_MARKER: &str = "messages_request_error";
-
-const BODY_FIELDS: [&str; 22] = [
-    "max_tokens",
-    "metadata",
-    "stop_sequences",
-    "stream",
-    "system",
-    "temperature",
-    "thinking",
-    "tool_choice",
-    "tools",
-    "top_k",
-    "inference_geo",
-    "top_p",
-    "mcp_servers",
-    "context_management",
-    "compaction",
-    "container",
-    "output_format",
-    "speed",
-    "output_config",
-    "cache_control",
-    "reasoning_effort",
-    "safeguards",
-];
 
 fn merge_headers(
     forwarded: Option<Map<String, Value>>,
@@ -90,15 +70,21 @@ fn native_error(py: Python<'_>, error: Error) -> PyResult<PyErr> {
 /// public response, chunks and exceptions.
 pub(super) struct MessagesPythonHost {
     request: Py<PyAny>,
+    supplied: BTreeSet<String>,
     cache: PythonCache,
 }
 
 impl MessagesPythonHost {
-    pub(super) fn new(request: Py<PyAny>, asynchronous: bool) -> Self {
-        Self {
+    pub(super) fn new(
+        request: Py<PyAny>,
+        asynchronous: bool,
+        kwargs: &Bound<'_, PyDict>,
+    ) -> PyResult<Self> {
+        Ok(Self {
             request,
+            supplied: supplied_keys(kwargs)?,
             cache: PythonCache::new(asynchronous),
-        }
+        })
     }
 
     fn projection(
@@ -116,14 +102,14 @@ impl MessagesPythonHost {
         let model = string("model")?.ok_or_else(|| PyValueError::new_err("model is required"))?;
         let messages =
             argument("messages")?.ok_or_else(|| PyValueError::new_err("messages is required"))?;
-        let fields = BODY_FIELDS
-            .iter()
-            .filter_map(|name| match argument(name) {
-                Ok(Some(value)) => Some(from_py(&value).map(|value| ((*name).to_string(), value))),
-                Ok(None) => None,
-                Err(error) => Some(Err(error)),
-            })
-            .collect::<PyResult<Vec<(String, Value)>>>()?;
+        let fields = provider_parameters(
+            py,
+            arguments,
+            request.cast::<PyDict>()?,
+            &self.supplied,
+            &["messages"],
+            &["metadata"],
+        )?;
         let body = [
             ("model".to_string(), Value::String(model.clone())),
             ("messages".to_string(), from_py(&messages)?),
